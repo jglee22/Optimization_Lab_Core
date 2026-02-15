@@ -57,16 +57,16 @@ namespace OptimizationLab.JobSystem
             // 위치 업데이트: P = P + V * dt
             float3 newPosition = positions[index] + velocities[index] * deltaTime;
 
-            // 1. 최소값 경계 체크 (x, y, z 동시에 비교 -> 결과도 bool3로 나옴)
+            // 1. 최소값 경계 체크 (x, y, z 동시에 비교)
             bool3 isOutMin = newPosition < boundsMin;
 
-            // 2. 한 방에 적용 (x, y, z 중 true인 곳만 boundsMax로 바뀜)
+            // 2. x, y, z 중 true인 곳만 boundsMax로 바뀜
             newPosition = math.select(newPosition, boundsMax, isOutMin);
 
             // 3. 최대값 경계 체크
             bool3 isOutMax = newPosition > boundsMax;
 
-            // 4. 한 방에 적용
+            // 4.적용
             newPosition = math.select(newPosition, boundsMin, isOutMax);
             
             // newPosition은 스택(Stack)에 있는 임시 변수이므로,

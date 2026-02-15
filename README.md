@@ -2,12 +2,25 @@
 
 > **프로젝트 개요**: Unity의 **Job System, Burst Compiler, GPU Instancing** 기술을 활용하여 50,000개 이상의 객체를 모바일 환경에서 60 FPS로 시뮬레이션하는 고성능 최적화 데모입니다.
 
+**Unity 버전**: 6000.0.56f1 (Unity 6)
+
+---
+
+## 📌 빠른 시작 (Quick Start)
+
+1. **Unity**에서 프로젝트 열기
+2. 벤치마크 씬 실행 후 **시작 모드**: 오브젝트 방식 → **버튼/스페이스**로 인스턴스 렌더링 모드 전환
+3. **카메라**: PC는 우클릭 회전·휠 줌·휠클릭 팬, 모바일은 한 손가락 회전·두 손가락 팬/줌
+4. **오브젝트 개수**: UI 버튼 또는 ↑/↓ 키로 변경 (1000 ~ 50000)
+
+---
+
 ## 📊 성능 테스트 결과 (모바일)
 테스트 기기: **Galaxy Z Fold 3** (Snapdragon 888) / 객체 수: **50,000개**
 
 | 모드 (Mode) | FPS | 상태 | 분석 결과 |
 |:---:|:---:|:---:|:---|
-| **GameObject** | ~15 FPS | 플레이 불가 | 메인 스레드 병목, 대량의 GC 발생, 드로우콜 과다 |
+| **GameObject** | ~3 FPS | 플레이 불가 | 메인 스레드 병목, 대량의 GC 발생, 드로우콜 과다 |
 | **Job System** | **59.9 FPS** | **매우 쾌적** | **약 400% 성능 향상**, 병렬 처리, Zero GC 달성 |
 
 ---
@@ -40,12 +53,30 @@ CPU의 분기 예측 실패(Branch Misprediction) 비용을 제거하기 위해 
 ## 💻 프로젝트 구조
 
 ```text
-OptimizationLab
+Assets/Scripts/
 ├── 📂 Managers
-│   ├── GameObjectManager.cs    // 대조군 (기존 방식)
-│   └── JobSystemManager.cs     // ★ 핵심 구현 (NativeArray & Batching)
+│   ├── GameObjectManager.cs     // 대조군 (GameObject + Blend Tree 애니메이션)
+│   └── JobSystemManager.cs     // ★ 인스턴스 렌더링 (NativeArray, 3매터리얼 배칭)
 ├── 📂 JobSystem
-│   ├── PositionUpdateJob.cs    // [Burst] SIMD 물리 연산 (math.select 적용)
-│   └── MatrixTransformJob.cs   // [Burst] 행렬 변환 최적화
-└── 📂 Benchmark
-    └── BenchmarkController.cs  // 모드 전환 및 UI/Input 관리
+│   ├── PositionUpdateJob.cs    // [Burst] SIMD 위치 연산 (math.select)
+│   ├── MatrixTransformJob.cs   // [Burst] 행렬 변환
+│   └── PositionUpdateJobBurstOptimized.cs  // 선택) 추가 최적화 버전
+├── 📂 Benchmark
+│   └── BenchmarkController.cs // 모드 전환, 오브젝트 수 변경, UI/버튼
+├── 📂 Camera
+│   └── CameraOrbitController.cs // PC(마우스/키보드) · 모바일(터치) 카메라
+└── 📂 Helpers
+    ├── GridLayoutHelper.cs     // 그리드 배치 공통 로직
+    └── PrefabCreator.cs        // 벤치마크용 프리팹 생성
+```
+
+---
+
+## ⚙️ 설정 요약
+
+| 항목 | 설명 |
+|------|------|
+| **시작 모드** | 오브젝트 모드 → 버튼/스페이스로 인스턴스 모드 전환 |
+| **오브젝트 방식** | 프리팹 + Blend Tree(Speed 파라미터), idle/walk/run 랜덤·타이밍 랜덤 |
+| **인스턴스 방식** | 메쉬 + Idle/Walk/Run 매터리얼 3종 랜덤 적용, 그리드 배치 |
+| **카메라** | 타겟 지정 가능, 타겟 아래로 내려가지 않음(최소 pitch 설정 가능) |

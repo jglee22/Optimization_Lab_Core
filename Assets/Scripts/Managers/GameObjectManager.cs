@@ -1,30 +1,38 @@
 using System.Collections.Generic;
 using UnityEngine;
+using OptimizationLab.Helpers;
 
 namespace OptimizationLab.Managers
 {
     /// <summary>
     /// 전통적인 GameObject 방식을 사용하는 매니저 (비교용)
-    /// 메인 스레드에서 순차적으로 위치 업데이트 수행
+    /// 오브젝트를 일정 간격 그리드로만 생성하며, 움직임 없음
     /// </summary>
     public class GameObjectManager : MonoBehaviour
     {
         [Header("Spawn Settings")]
         [SerializeField] private int objectCount = 10000;
+        [Tooltip("바닥 위에 생성할 오브젝트 프리팹 (Animator 있으면 idle/walk/run 랜덤 재생)")]
         [SerializeField] private GameObject prefab;
-        [SerializeField] private float spawnRadius = 50f;
-        [SerializeField] private float speedRange = 5f;
+        [SerializeField] private float gridSpacing = 2f;
+        [SerializeField] private float groundHeight = 0f;
 
-        [Header("Bounds")]
-        [SerializeField] private Vector3 boundsMin = new Vector3(-50, -50, -50);
-        [SerializeField] private Vector3 boundsMax = new Vector3(50, 50, 50);
+        [Header("Animation - Blend Tree (Speed 파라미터)")]
+        [Tooltip("Blend Tree가 있는 스테이트 이름 (재생 타이밍 랜덤용, 비우면 Speed만 설정)")]
+        [SerializeField] private string blendTreeStateName = "Blend Tree";
+        [SerializeField] private int animatorLayer = 0;
+        [Tooltip("Blend Tree 제어용 파라미터 이름 (예: Speed)")]
+        [SerializeField] private string speedParameterName = "Speed";
+        [Tooltip("idle / walk / run에 넣을 Speed 값")]
+        [SerializeField] private float speedIdle = 0f;
+        [SerializeField] private float speedWalk = 1f;
+        [SerializeField] private float speedRun = 2f;
 
         private List<GameObject> spawnedObjects;
-        private List<Vector3> velocities;
         private bool isInitialized = false;
 
         /// <summary>
-        /// 초기화: 오브젝트 생성 및 속도 설정
+        /// 초기화: 그리드 배치로 오브젝트 생성 및 Blend Tree 애니메이션 랜덤 적용
         /// </summary>
         private void Initialize()
         {
@@ -35,25 +43,35 @@ namespace OptimizationLab.Managers
             }
 
             spawnedObjects = new List<GameObject>(objectCount);
-            velocities = new List<Vector3>(objectCount);
 
-            // 오브젝트 생성 및 초기 위치/속도 설정
             for (int i = 0; i < objectCount; i++)
             {
-                Vector3 randomPosition = UnityEngine.Random.insideUnitSphere * spawnRadius;
-                Vector3 randomVelocity = UnityEngine.Random.insideUnitSphere * speedRange;
-
-                GameObject obj = Instantiate(prefab, randomPosition, Quaternion.identity);
+                Vector3 position = GridLayoutHelper.GetGridPositionVector3(i, objectCount, gridSpacing, groundHeight);
+                GameObject obj = Instantiate(prefab, position, Quaternion.identity);
                 spawnedObjects.Add(obj);
-                velocities.Add(randomVelocity);
+
+                // Blend Tree: Speed 파라미터로 idle(0)/walk/run 랜덤 + 재생 시점 랜덤
+                var anim = obj.GetComponent<Animator>();
+                if (anim != null && anim.runtimeAnimatorController != null)
+                {
+                    int stateIndex = Random.Range(0, 3);
+                    float speed = stateIndex == 0 ? speedIdle : (stateIndex == 1 ? speedWalk : speedRun);
+                    anim.SetFloat(speedParameterName, speed);
+
+                    if (!string.IsNullOrEmpty(blendTreeStateName))
+                    {
+                        float normalizedTime = Random.Range(0f, 1f);
+                        anim.Play(blendTreeStateName, animatorLayer, normalizedTime);
+                    }
+                }
             }
 
             Debug.Log($"GameObjectManager: {objectCount}개의 오브젝트 생성 완료");
         }
 
+        /// <summary> 활성화 시 초기화 (모드 전환 시) </summary>
         private void OnEnable()
         {
-            // 활성화될 때만 초기화 (모드 전환 시)
             if (!isInitialized)
             {
                 Initialize();
@@ -61,46 +79,13 @@ namespace OptimizationLab.Managers
             }
         }
 
+        /// <summary> 비활성화 시 정리 (모드 전환 시) </summary>
         private void OnDisable()
         {
-            // 비활성화될 때 정리 (모드 전환 시)
             if (isInitialized)
             {
                 Cleanup();
                 isInitialized = false;
-            }
-        }
-
-        private void Update()
-        {
-            // 초기화되지 않았으면 실행하지 않음
-            if (!isInitialized || spawnedObjects == null) return;
-
-            // 메인 스레드에서 순차적으로 위치 업데이트
-            for (int i = 0; i < spawnedObjects.Count; i++)
-            {
-                if (spawnedObjects[i] == null) continue;
-
-                // 위치 업데이트: P = P + V * dt
-                Vector3 newPosition = spawnedObjects[i].transform.position + velocities[i] * Time.deltaTime;
-
-                // 경계 체크 및 래핑
-                if (newPosition.x < boundsMin.x)
-                    newPosition.x = boundsMax.x;
-                else if (newPosition.x > boundsMax.x)
-                    newPosition.x = boundsMin.x;
-
-                if (newPosition.y < boundsMin.y)
-                    newPosition.y = boundsMax.y;
-                else if (newPosition.y > boundsMax.y)
-                    newPosition.y = boundsMin.y;
-
-                if (newPosition.z < boundsMin.z)
-                    newPosition.z = boundsMax.z;
-                else if (newPosition.z > boundsMax.z)
-                    newPosition.z = boundsMin.z;
-
-                spawnedObjects[i].transform.position = newPosition;
             }
         }
 
@@ -140,12 +125,9 @@ namespace OptimizationLab.Managers
                 spawnedObjects.Clear();
             }
 
-            if (velocities != null)
-            {
-                velocities.Clear();
-            }
         }
 
+        /// <summary> 파괴 시 생성된 오브젝트 정리 </summary>
         private void OnDestroy()
         {
             Cleanup();

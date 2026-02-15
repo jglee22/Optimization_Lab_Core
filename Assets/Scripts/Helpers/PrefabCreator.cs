@@ -40,6 +40,7 @@ namespace OptimizationLab.Helpers
             GameObject prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             prefab.name = name;
             
+            // 머티리얼 설정 (URP Lit, 랜덤 색)
             Renderer renderer = prefab.GetComponent<Renderer>();
             if (renderer != null)
             {

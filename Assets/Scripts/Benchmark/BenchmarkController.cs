@@ -17,7 +17,7 @@ namespace OptimizationLab.Benchmark
         [SerializeField] private TextMeshProUGUI fpsText;
         [SerializeField] private TextMeshProUGUI objectCountText;
         [SerializeField] private TextMeshProUGUI modeText;
-        [SerializeField] private Button mobileModeChanbeButton;
+        [SerializeField] private Button mobileModeChangeButton;
         [SerializeField] private Button increaseButton;
         [SerializeField] private Button decreaseButton;
 
@@ -67,8 +67,8 @@ namespace OptimizationLab.Benchmark
 
         private void Start()
         {
-            // 초기 모드 설정
-            SwitchMode(BenchmarkMode.JobSystem);
+            // 초기 모드: 오브젝트 → 버튼 누르면 인스턴스 렌더링으로 전환
+            SwitchMode(BenchmarkMode.GameObject);
             UpdateObjectCount();
             ObjectCountChangeButtons();
             ModeChangeButton();
@@ -220,23 +220,24 @@ namespace OptimizationLab.Benchmark
             }
         }
 
+        /// <summary>
+        /// 오브젝트 개수 증감 버튼에 리스너 연결
+        /// </summary>
         private void ObjectCountChangeButtons()
         {
             if (increaseButton != null)
-            {
                 increaseButton.onClick.AddListener(IncreaseObjectCount);
-            }
             if (decreaseButton != null)
-            {
                 decreaseButton.onClick.AddListener(DecreaseObjectCount);
-            }
         }
+
+        /// <summary>
+        /// 모드 전환 버튼에 리스너 연결 (오브젝트 ↔ 인스턴스 렌더링)
+        /// </summary>
         private void ModeChangeButton()
         {
-            if (mobileModeChanbeButton != null)
-            {
-                mobileModeChanbeButton.onClick.AddListener(ToggleMode);
-            }
+            if (mobileModeChangeButton != null)
+                mobileModeChangeButton.onClick.AddListener(ToggleMode);
         }
 
         private void OnGUI()
