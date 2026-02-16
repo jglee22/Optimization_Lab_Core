@@ -233,6 +233,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 2322758, guid: 632123afcf02d1248a61706aaaeb3cc0, type: 3}
+      propertyPath: m_CastShadows
+      value: 0
+      objectReference: {fileID: 0}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -1180,7 +1184,7 @@ MonoBehaviour:
   fpsText: {fileID: 674063197}
   objectCountText: {fileID: 1383068933}
   modeText: {fileID: 714402329}
-  mobileModeChanbeButton: {fileID: 725514504}
+  mobileModeChangeButton: {fileID: 725514504}
   increaseButton: {fileID: 2089942381}
   decreaseButton: {fileID: 426567868}
   testObjectCounts: e80300008813000010270000204e000050c30000
