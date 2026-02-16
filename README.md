@@ -15,6 +15,10 @@
 
 ---
 
+https://github.com/user-attachments/assets/bf9bb883-ddeb-4c8d-90cc-c3ef8a1afb44
+
+
+
 ## 📊 성능 테스트 결과 (모바일)
 테스트 기기: **Galaxy Z Fold 3** (Snapdragon 888)
 
