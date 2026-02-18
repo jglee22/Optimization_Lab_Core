@@ -6,6 +6,7 @@ using UnityEngine;
 using Unity.Burst;
 using OptimizationLab.JobSystem;
 using OptimizationLab.Helpers;
+using OptimizationLab.Tool;
 
 namespace OptimizationLab.Managers
 {
@@ -110,6 +111,22 @@ namespace OptimizationLab.Managers
             return list;
         }
 
+        /// <summary>
+        /// 씬에 브러시로 배치한 인스턴스가 하나라도 있으면 true.
+        /// (비활성 오브젝트까지 포함, 프리팹 에셋은 제외)
+        /// </summary>
+        private static bool HasPaintedInstancesInScene()
+        {
+            var all = Resources.FindObjectsOfTypeAll<PaintedInstancedRenderer>();
+            foreach (var p in all)
+            {
+                if (p == null) continue;
+                if (!p.gameObject.scene.IsValid()) continue; // 프리팹 에셋 제외
+                if (p.Count > 0) return true;
+            }
+            return false;
+        }
+
         /// <summary> 활성화 시 초기화 (모드 전환 시) </summary>
         private void OnEnable()
         {
@@ -204,19 +221,22 @@ namespace OptimizationLab.Managers
         }
 
         /// <summary>
-        /// 오브젝트 개수 설정
+        /// 오브젝트 개수 설정.
+        /// 씬에 브러시로 배치한 인스턴스가 있으면 0으로 덮어써서 그리드 생성을 건너뛰고, 배치된 것만 렌더링한다.
         /// </summary>
         public void SetObjectCount(int count)
         {
-            if (count <= 0) return;
+            if (count < 0) return;
+            if (HasPaintedInstancesInScene())
+                count = 0;
 
             // 기존 데이터 정리
             Cleanup();
             isInitialized = false;
 
             objectCount = count;
-            
-            // 활성화되어 있을 때만 즉시 초기화
+
+            // 활성화되어 있을 때만 즉시 초기화 (0이어도 빈 배열로 초기화해 두어야 Update/LateUpdate가 안전함)
             if (enabled)
             {
                 Initialize();

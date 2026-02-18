@@ -1,6 +1,7 @@
 using UnityEngine;
 using TMPro;
 using OptimizationLab.Managers;
+using OptimizationLab.Tool;
 using UnityEngine.UI;
 namespace OptimizationLab.Benchmark
 {
@@ -129,6 +130,9 @@ namespace OptimizationLab.Benchmark
 
             currentMode = mode;
 
+            // 브러시로 배치된 인스턴스(PaintedInstancedRenderer)는 JobSystem 모드에서만 보이게 제어
+            TogglePaintedRenderers(mode == BenchmarkMode.JobSystem);
+
             // 새 모드 활성화
             switch (mode)
             {
@@ -150,6 +154,23 @@ namespace OptimizationLab.Benchmark
             }
 
             Debug.Log($"모드 전환: {mode}");
+        }
+
+        /// <summary>
+        /// 씬에 존재하는 PaintedInstancedRenderer 중, 실제 씬 오브젝트(프리팹 제외)이면서
+        /// 인스턴스가 하나라도 있는 것만 대상으로 활성/비활성 전환.
+        /// GameObject 모드에서는 숨기고, JobSystem 모드에서만 보이게 한다.
+        /// </summary>
+        private void TogglePaintedRenderers(bool active)
+        {
+            var all = Resources.FindObjectsOfTypeAll<PaintedInstancedRenderer>();
+            foreach (var r in all)
+            {
+                if (r == null) continue;
+                if (!r.gameObject.scene.IsValid()) continue; // 프리팹 에셋 제외
+                if (r.Count <= 0) continue;
+                r.gameObject.SetActive(active);
+            }
         }
 
         /// <summary>
