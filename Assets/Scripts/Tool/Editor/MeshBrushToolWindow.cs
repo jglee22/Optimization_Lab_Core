@@ -19,6 +19,12 @@ namespace OptimizationLab.Tool.Editor
     {
         private const float DefaultRayDistance = 5000f;
         private const string PrefPrefix = "OptimizationLab_MeshBrush_";
+        private const float BrushRadiusMin = 0.05f;
+        private const float BrushRadiusMax = 10f;
+        /// <summary> Shift+휠 한 칸당 브러시 반경 증감량 </summary>
+        private const float BrushRadiusWheelStep = 0.25f;
+        /// <summary> true면 씬뷰 휠/모디파이어 디버그 로그 출력 </summary>
+        private const bool DebugScroll = true;
 
         [SerializeField] private PaintedInstancedRenderer target;
 
@@ -69,6 +75,66 @@ namespace OptimizationLab.Tool.Editor
         {
             EditorApplication.playModeStateChanged -= OnPlayModeStateChanged;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            // 씬뷰 휠을 가장 먼저 받기 위해 에디터 로드 시점에 등록
+            SceneView.beforeSceneGui -= StaticHandleSceneViewScroll;
+            SceneView.beforeSceneGui += StaticHandleSceneViewScroll;
+            if (DebugScroll) Debug.Log("[MeshBrush] InitOnLoad: beforeSceneGui registered for Ctrl+Shift+Scroll.");
+        }
+
+        /// <summary>
+        /// 씬뷰에서 Ctrl+Shift+휠 시 열려 있는 Mesh Brush 창들의 brushRadius를 변경.
+        /// static으로 InitOnLoad에서 등록해 씬뷰 내장 줌보다 먼저 실행되도록 함.
+        /// </summary>
+        private static void StaticHandleSceneViewScroll(SceneView sceneView)
+        {
+            Event e = Event.current;
+            if (e == null) return;
+            if (DebugScroll && e.type == EventType.ScrollWheel)
+            {
+                var inputScroll = UnityEngine.Input.mouseScrollDelta;
+                Debug.Log($"[MeshBrush beforeSceneGui] e.delta=({e.delta.x},{e.delta.y}) inputScroll=({inputScroll.x},{inputScroll.y})");
+            }
+            if (e.type != EventType.ScrollWheel) return;
+            // Ctrl+Shift 둘 다 눌렀을 때만
+            bool ctrlShift = (e.modifiers & (EventModifiers.Control | EventModifiers.Shift)) == (EventModifiers.Control | EventModifiers.Shift);
+            if (DebugScroll)
+                Debug.Log($"[MeshBrush beforeSceneGui] ScrollWheel ctrlShift={ctrlShift} modifiers={e.modifiers}");
+            if (!ctrlShift) return;
+
+            var windows = Resources.FindObjectsOfTypeAll<MeshBrushToolWindow>();
+            if (windows == null || windows.Length == 0)
+            {
+                if (DebugScroll) Debug.Log("[MeshBrush beforeSceneGui] no MeshBrushToolWindow found, skip");
+                return;
+            }
+
+            // 방향: Y 우선, 없으면 X (일부 환경에서 세로 휠이 delta.x로 오는 경우 대비)
+            float scroll = UnityEngine.Input.mouseScrollDelta.y;
+            if (Mathf.Abs(scroll) < 0.001f) scroll = e.delta.y;
+            if (Mathf.Abs(scroll) < 0.001f) scroll = e.delta.x;
+            if (Mathf.Abs(scroll) < 0.001f) scroll = UnityEngine.Input.mouseScrollDelta.x;
+            // 모두 0이면 방향을 알 수 없으므로 적용 안 함 (한쪽으로만 커지는 현상 방지)
+            if (Mathf.Abs(scroll) < 0.001f) return;
+
+            float delta = -Mathf.Sign(scroll) * BrushRadiusWheelStep; // 휠 위 = 커지게, 휠 아래 = 작아지게
+            foreach (var w in windows)
+            {
+                if (w == null) continue;
+                w.ApplyBrushRadiusScrollDelta(delta);
+            }
+            e.Use();
+            SceneView.RepaintAll();
+            if (windows.Length > 0 && windows[0] != null)
+                windows[0].Repaint();
+            if (DebugScroll) Debug.Log($"[MeshBrush beforeSceneGui] applied delta={delta}");
+        }
+
+        /// <summary>
+        /// 씬뷰 휠 등에서 호출. 브러시 반경에 델타를 적용해 Min/Max로 클램프한다.
+        /// </summary>
+        internal void ApplyBrushRadiusScrollDelta(float delta)
+        {
+            brushRadius = Mathf.Clamp(brushRadius + delta, BrushRadiusMin, BrushRadiusMax);
         }
 
         /// <summary>
@@ -103,14 +169,28 @@ namespace OptimizationLab.Tool.Editor
         {
             EnsureSceneHooked();
             TryAutoAssignTarget();
-            LoadPrefs();
         }
 
         private void OnGUI()
         {
+            // 툴 창 위에서 Ctrl+Shift+휠 시 반경 조절 (마우스가 Mesh Brush 창 위에 있을 때)
+            Event e = Event.current;
+            if (e != null && e.type == EventType.ScrollWheel && e.control && e.shift)
+            {
+                float scroll = UnityEngine.Input.mouseScrollDelta.y;
+                if (Mathf.Abs(scroll) < 0.001f) scroll = e.delta.y;
+                if (Mathf.Abs(scroll) < 0.001f) scroll = e.delta.x;
+                if (Mathf.Abs(scroll) < 0.001f) scroll = UnityEngine.Input.mouseScrollDelta.x;
+                if (Mathf.Abs(scroll) >= 0.001f)
+                {
+                    float delta = -Mathf.Sign(scroll) * BrushRadiusWheelStep; // 휠 위 = 커지게, 휠 아래 = 작아지게
+                    brushRadius = Mathf.Clamp(brushRadius + delta, BrushRadiusMin, BrushRadiusMax);
+                }
+                e.Use();
+            }
+
             EnsureSceneHooked();
             TryAutoAssignTarget();
-            LoadPrefs();
 
             EditorGUILayout.Space();
             target = (PaintedInstancedRenderer)EditorGUILayout.ObjectField("Target", target, typeof(PaintedInstancedRenderer), true);
@@ -135,7 +215,7 @@ namespace OptimizationLab.Tool.Editor
             }
 
             EditorGUILayout.Space();
-            brushRadius = EditorGUILayout.Slider("Brush Radius", brushRadius, 0.05f, 50f);
+            brushRadius = EditorGUILayout.Slider("Brush Radius", brushRadius, BrushRadiusMin, BrushRadiusMax);
             stampSpacing = EditorGUILayout.Slider("Stamp Spacing", stampSpacing, 0.01f, 10f);
             instancesPerStamp = EditorGUILayout.IntSlider("Instances / Stamp", instancesPerStamp, 1, 500);
             scatterWithinRadius = EditorGUILayout.Toggle("Scatter Within Radius", scatterWithinRadius);
@@ -182,6 +262,7 @@ namespace OptimizationLab.Tool.Editor
             EditorGUILayout.HelpBox(
                 "씬뷰에서 좌클릭 드래그로 페인트합니다.\n" +
                 "- Shift + 좌클릭 드래그로 지웁니다.\n" +
+                "- 씬뷰에서 Ctrl+Shift+휠로 브러시 반경 조절.\n" +
                 "- Alt(카메라 조작) 중에는 페인트하지 않습니다.\n" +
                 "- Target이 없으면 Create Target을 먼저 누르세요.",
                 MessageType.Info
@@ -197,11 +278,34 @@ namespace OptimizationLab.Tool.Editor
         /// </summary>
         private void OnSceneGUI(SceneView sceneView)
         {
+            Event e = Event.current;
+            if (DebugScroll && e != null && e.type == EventType.ScrollWheel)
+            {
+                var inputScroll = UnityEngine.Input.mouseScrollDelta;
+                Debug.Log($"[MeshBrush duringSceneGui] e.delta=({e.delta.x},{e.delta.y}) inputScroll=({inputScroll.x},{inputScroll.y})");
+            }
+            bool ctrlShiftScroll = e != null && e.type == EventType.ScrollWheel
+                && (e.modifiers & (EventModifiers.Control | EventModifiers.Shift)) == (EventModifiers.Control | EventModifiers.Shift);
+            if (ctrlShiftScroll)
+            {
+                float scroll = UnityEngine.Input.mouseScrollDelta.y;
+                if (Mathf.Abs(scroll) < 0.001f) scroll = e.delta.y;
+                if (Mathf.Abs(scroll) < 0.001f) scroll = e.delta.x;
+                if (Mathf.Abs(scroll) < 0.001f) scroll = UnityEngine.Input.mouseScrollDelta.x;
+                if (Mathf.Abs(scroll) >= 0.001f)
+                {
+                    float delta = -Mathf.Sign(scroll) * BrushRadiusWheelStep; // 휠 위 = 커지게, 휠 아래 = 작아지게
+                    if (DebugScroll) Debug.Log($"[MeshBrush duringSceneGui] applying scroll delta={delta} (Ctrl+Shift+Wheel)");
+                    ApplyBrushRadiusScrollDelta(delta);
+                }
+                e.Use();
+                SceneView.RepaintAll();
+                Repaint();
+            }
+
             EnsureSceneHooked();
             if (target == null) TryAutoAssignTarget();
             if (target == null) return;
-
-            Event e = Event.current;
             if (e == null) return;
 
             // Alt 누른 상태(씬뷰 카메라 조작)는 제외
@@ -336,7 +440,11 @@ namespace OptimizationLab.Tool.Editor
             centers[0] = center;
             normals[0] = normal;
 
-            int total = instancesPerStamp;
+            // 브러시 반경이 커질수록 스탬프당 인스턴스 수를 비례해서 늘린다.
+            // 기준: 최소 반경(BrushRadiusMin)일 때 instancesPerStamp 개,
+            //       그보다 k배 크면 대략 k배 만큼 배치.
+            int instancesForThisStamp = Mathf.Max(1, Mathf.RoundToInt(instancesPerStamp * (brushRadius / BrushRadiusMin)));
+            int total = instancesForThisStamp;
             var outPos = new NativeArray<float3>(total, Allocator.TempJob);
             var outRot = new NativeArray<quaternion>(total, Allocator.TempJob);
             var outScale = new NativeArray<float>(total, Allocator.TempJob);
@@ -345,7 +453,7 @@ namespace OptimizationLab.Tool.Editor
             {
                 centers = centers,
                 normals = normals,
-                instancesPerStamp = instancesPerStamp,
+                instancesPerStamp = instancesForThisStamp,
                 brushRadius = brushRadius,
                 minScale = Mathf.Max(0.0001f, minScale),
                 maxScale = Mathf.Max(0.0001f, maxScale),
