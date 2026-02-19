@@ -94,23 +94,22 @@ namespace OptimizationLab.Tool
                 offset2 = new float2(math.cos(theta), math.sin(theta)) * r;
             }
 
-            // 노말 기반 탄젠트/바이탄젠트
             float3 up = new float3(0, 1, 0);
-            float3 tangent = math.cross(up, n);
-            float tangentLenSq = math.lengthsq(tangent);
-            tangent = tangentLenSq < 1e-6f ? math.normalize(math.cross(new float3(1, 0, 0), n)) : (tangent / math.sqrt(tangentLenSq));
-            float3 bitangent = math.normalize(math.cross(n, tangent));
-
-            float3 pos = center + tangent * offset2.x + bitangent * offset2.y;
-            outPositions[index] = pos;
-
             float yaw = rnd.NextFloat(-randomYawRadians, randomYawRadians);
             float s = rnd.NextFloat(minScale, maxScale);
             outScales[index] = s;
 
+            // 위치는 항상 표면(tangent/bitangent) 평면 위에 배치 → 산맥·큐브 등 높낮이에 맞게 찍힘
+            float3 tangent = math.cross(up, n);
+            float tangentLenSq = math.lengthsq(tangent);
+            tangent = tangentLenSq < 1e-6f ? math.normalize(math.cross(new float3(1, 0, 0), n)) : (tangent / math.sqrt(tangentLenSq));
+            float3 bitangent = math.normalize(math.cross(n, tangent));
+            float3 pos = center + tangent * offset2.x + bitangent * offset2.y;
+            outPositions[index] = pos;
+
             if (!alignToNormal)
             {
-                // 회전 정렬 없이 월드 Up 기준 Yaw만 적용
+                // 표면에는 붙이되, 메쉬는 항상 세워서(Y-up) Yaw만 랜덤
                 outRotations[index] = quaternion.AxisAngle(up, yaw);
                 return;
             }

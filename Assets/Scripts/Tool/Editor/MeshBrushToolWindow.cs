@@ -312,7 +312,7 @@ namespace OptimizationLab.Tool.Editor
             if (e.alt) return;
 
             // 브러시 프리뷰 + 입력 처리
-            if (TryGetBrushHit(e.mousePosition, sceneView.camera, out var hitPos, out var hitNormal))
+            if (TryGetBrushHit(e.mousePosition, sceneView.camera, out var hitPos, out var hitNormal, out _))
             {
                 bool isEraser = enableShiftEraser && e.shift;
                 DrawBrushGizmo(hitPos, hitNormal, isEraser);
@@ -350,7 +350,7 @@ namespace OptimizationLab.Tool.Editor
 
         private void BeginErase(SceneView sceneView, Vector2 mousePosition)
         {
-            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out var hitNormal)) return;
+            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out var hitNormal, out _)) return;
             isPainting = true;
             lastStampWorldPos = hitPos;
             EraseAtHit(hitPos);
@@ -358,7 +358,7 @@ namespace OptimizationLab.Tool.Editor
 
         private void ContinueErase(SceneView sceneView, Vector2 mousePosition)
         {
-            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out _)) return;
+            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out _, out _)) return;
             float dist = Vector3.Distance(lastStampWorldPos, hitPos);
             if (dist < stampSpacing) return;
 
@@ -392,19 +392,19 @@ namespace OptimizationLab.Tool.Editor
         /// </summary>
         private void BeginStroke(SceneView sceneView, Vector2 mousePosition)
         {
-            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out var hitNormal)) return;
+            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out var hitNormal, out var hitCol)) return;
 
             isPainting = true;
             lastStampWorldPos = hitPos;
             strokeSeed = (uint)(System.Environment.TickCount ^ target.GetInstanceID() ^ (int)(hitPos.x * 1000f) ^ (int)(hitPos.z * 1000f));
 
             // 첫 스탬프 즉시 생성
-            StampAtHit(hitPos, hitNormal);
+            StampAtHit(hitPos, hitNormal, hitCol);
         }
 
         private void ContinueStroke(SceneView sceneView, Vector2 mousePosition)
         {
-            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out var hitNormal)) return;
+            if (!TryGetBrushHit(mousePosition, sceneView.camera, out var hitPos, out var hitNormal, out var hitCol)) return;
 
             float dist = Vector3.Distance(lastStampWorldPos, hitPos);
             if (dist < stampSpacing) return;
@@ -417,7 +417,8 @@ namespace OptimizationLab.Tool.Editor
             for (int i = 1; i <= steps; i++)
             {
                 Vector3 p = from + dir * (stampSpacing * i);
-                StampAtHit(p, hitNormal);
+                // 이 프레임에서 마우스가 가리키는 표면(hitCol)에만 배치
+                StampAtHit(p, hitNormal, hitCol);
             }
 
             // 마지막으로 스탬프 찍힌 지점까지 갱신 (spacing 유지)
@@ -432,8 +433,9 @@ namespace OptimizationLab.Tool.Editor
         /// <summary>
         /// 하나의 스탬프(중심/노말) 기준으로 Job을 돌려 인스턴스를 생성하고,
         /// Undo/Overlap 필터링까지 적용한 뒤 PaintedInstancedRenderer에 누적한다.
+        /// surfaceCollider가 있으면 해당 콜라이더 표면에만 배치(다른 오브젝트와 겹침 방지).
         /// </summary>
-        private void StampAtHit(Vector3 center, Vector3 normal)
+        private void StampAtHit(Vector3 center, Vector3 normal, Collider surfaceCollider = null)
         {
             var centers = new NativeArray<float3>(1, Allocator.TempJob);
             var normals = new NativeArray<float3>(1, Allocator.TempJob);
@@ -470,7 +472,7 @@ namespace OptimizationLab.Tool.Editor
             JobHandle handle = job.Schedule(total, 64);
             handle.Complete();
 
-            // managed로 옮겨서 target에 누적 (Undo 가능)
+            // managed로 옮겨서 target에 누적 (Undo/Overlap/표면 높이 보정용)
             var mPos = new List<Vector3>(total);
             var mRot = new List<Quaternion>(total);
             var mScale = new List<float>(total);
@@ -485,6 +487,76 @@ namespace OptimizationLab.Tool.Editor
             {
                 FilterOverlap(center, mPos, mRot, mScale, minSeparation);
             }
+
+            // 산맥/복잡한 메쉬 위에서도 정확히 표면을 따라가도록
+            // XZ는 그대로 두고, Y는 월드 다운 레이캐스트로 다시 맞춘다.
+            // surfaceCollider가 있으면 그 콜라이더에 맞은 점만 남겨 두 오브젝트에 걸친 겹침 방지.
+            // 또한 동일 위치에 A/B 콜라이더가 겹쳐 있는 경우(두 개 이상 히트, 높이 차이 거의 없음)에는
+            // 해당 지점은 배치하지 않고 건너뛰어, 경계선에서의 이중 배치를 방지한다.
+            const float rayHeight = 200f;
+            const float overlappingSurfaceHeightEpsilon = 0.02f; // 거의 같은 높이에 두 표면이 겹치면 그 지점은 스킵
+            const int maxRayHits = 4;
+            var rayHits = new RaycastHit[maxRayHits];
+            var keepPos = new List<Vector3>(mPos.Count);
+            var keepRot = new List<Quaternion>(mPos.Count);
+            var keepScale = new List<float>(mPos.Count);
+            for (int i = 0; i < mPos.Count; i++)
+            {
+                Vector3 p = mPos[i];
+                Vector3 origin = p + Vector3.up * rayHeight;
+
+                int hitCount = Physics.RaycastNonAlloc(origin, Vector3.down, rayHits, rayHeight * 2f, paintMask);
+                if (hitCount == 0)
+                {
+                    // 레이에 안 맞으면 제거 (공중에 뜨는 점 방지)
+                    continue;
+                }
+
+                // 1. 공중에서 레이를 쐈을 때 '가장 상단에 있는 표면'을 찾습니다.
+                // 1. 공중에서 레이를 쐈을 때 '가장 상단에 있는 표면'을 찾습니다.
+                int bestIndex = -1;
+                float bestDist = float.MaxValue;
+                for (int h = 0; h < hitCount; h++)
+                {
+                    if (rayHits[h].distance < bestDist)
+                    {
+                        bestDist = rayHits[h].distance;
+                        bestIndex = h;
+                    }
+                }
+
+                if (bestIndex < 0) continue;
+                RaycastHit bestHit = rayHits[bestIndex];
+
+                // 2. 가장 상단 표면이 내가 지금 칠하려는 대상(surfaceCollider)이 아니면 버립니다.
+                // (B가 A를 가리고 있는데, B를 뚫고 A 바닥에 억지로 배치되는 현상 방지)
+                if (surfaceCollider != null && bestHit.collider != surfaceCollider)
+                    continue;
+
+                // 동일 위치에 A/B 표면이 거의 같은 높이로 겹쳐 있다면,
+                // 해당 지점은 모호하므로 배치하지 않는다 (이중 배치 방지).
+                bool hasOverlappingSurface = false;
+                for (int h = 0; h < hitCount; h++)
+                {
+                    if (h == bestIndex) continue;
+                    float dy = Mathf.Abs(rayHits[h].point.y - bestHit.point.y);
+                    if (dy < overlappingSurfaceHeightEpsilon)
+                    {
+                        hasOverlappingSurface = true;
+                        break;
+                    }
+                }
+                if (hasOverlappingSurface)
+                    continue;
+
+                p.y = bestHit.point.y;
+                keepPos.Add(p);
+                keepRot.Add(mRot[i]);
+                keepScale.Add(mScale[i]);
+            }
+            mPos = keepPos;
+            mRot = keepRot;
+            mScale = keepScale;
 
             Undo.RecordObject(target, "Paint Instances (Job System)");
             target.AddInstances(mPos, mRot, mScale);
@@ -516,6 +588,8 @@ namespace OptimizationLab.Tool.Editor
             // 스탬프 근방의 기존 인스턴스 + 이번에 통과한 신규 인스턴스를 공간 해시로 관리
             var grid = new Dictionary<Vector3Int, List<Vector3>>(256);
 
+            // 겹침 판단은 시각적으로 보이는 XZ 평면 기준으로 하기 때문에,
+            // 기존 인스턴스를 가져올 때도 XZ 범위만 사용한다.
             float range = brushRadius + separation;
             var existing = target.Positions;
             if (existing != null)
@@ -523,9 +597,8 @@ namespace OptimizationLab.Tool.Editor
                 for (int i = 0; i < existing.Count; i++)
                 {
                     Vector3 p = existing[i];
-                    // 스탬프 중심 근방만 넣어도 충분 (성능)
+                    // 스탬프 중심 근방만 넣어도 충분 (성능) — XZ 기준으로만 제한
                     if (Mathf.Abs(p.x - stampCenter.x) > range) continue;
-                    if (Mathf.Abs(p.y - stampCenter.y) > range) continue;
                     if (Mathf.Abs(p.z - stampCenter.z) > range) continue;
 
                     Vector3Int c = ToCell(p, cellSize);
@@ -549,21 +622,25 @@ namespace OptimizationLab.Tool.Editor
                 bool overlapped = false;
 
                 for (int dx = -1; dx <= 1 && !overlapped; dx++)
-                for (int dy = -1; dy <= 1 && !overlapped; dy++)
-                for (int dz = -1; dz <= 1 && !overlapped; dz++)
-                {
-                    var nc = new Vector3Int(c.x + dx, c.y + dy, c.z + dz);
-                    if (!grid.TryGetValue(nc, out var list)) continue;
-                    for (int k = 0; k < list.Count; k++)
+                    //for (int dy = -1; dy <= 1 && !overlapped; dy++)
+                    for (int dz = -1; dz <= 1 && !overlapped; dz++)
                     {
-                        Vector3 q = list[k];
-                        if ((p - q).sqrMagnitude <= sepSq)
+                        var nc = new Vector3Int(c.x + dx, 0, c.z + dz);
+                        if (!grid.TryGetValue(nc, out var list)) continue;
+                        for (int k = 0; k < list.Count; k++)
                         {
-                            overlapped = true;
-                            break;
+                            Vector3 q = list[k];
+                            // 시각적인 겹침은 주로 XZ 평면 기준이므로,
+                            // Y 높이 차이는 무시하고 XZ 거리만으로 겹침을 판단한다.
+                            Vector2 pa = new Vector2(p.x, p.z);
+                            Vector2 qa = new Vector2(q.x, q.z);
+                            if ((pa - qa).sqrMagnitude <= sepSq)
+                            {
+                                overlapped = true;
+                                break;
+                            }
                         }
                     }
-                }
 
                 if (overlapped) continue;
 
@@ -591,7 +668,7 @@ namespace OptimizationLab.Tool.Editor
         {
             return new Vector3Int(
                 Mathf.FloorToInt(p.x / cellSize),
-                Mathf.FloorToInt(p.y / cellSize),
+                0,
                 Mathf.FloorToInt(p.z / cellSize)
             );
         }
@@ -601,10 +678,14 @@ namespace OptimizationLab.Tool.Editor
         /// - 우선 Physics.Raycast로 충돌체를 찾고
         /// - 없으면 선택적으로 Y=0 평면을 히트 포인트로 사용한다.
         /// </summary>
-        private bool TryGetBrushHit(Vector2 mousePosition, UnityEngine.Camera cam, out Vector3 hitPos, out Vector3 hitNormal)
+        /// <summary>
+        /// 레이캐스트로 히트한 콜라이더를 반환. Y=0 평면 fallback이면 null.
+        /// </summary>
+        private bool TryGetBrushHit(Vector2 mousePosition, UnityEngine.Camera cam, out Vector3 hitPos, out Vector3 hitNormal, out Collider hitCollider)
         {
             hitPos = default;
             hitNormal = Vector3.up;
+            hitCollider = null;
             if (cam == null) return false;
 
             UnityEngine.Ray ray = HandleUtility.GUIPointToWorldRay(mousePosition);
@@ -612,6 +693,7 @@ namespace OptimizationLab.Tool.Editor
             {
                 hitPos = hit.point;
                 hitNormal = hit.normal.sqrMagnitude < 1e-6f ? Vector3.up : hit.normal.normalized;
+                hitCollider = hit.collider;
                 return true;
             }
 
