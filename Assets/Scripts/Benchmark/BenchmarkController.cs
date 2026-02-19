@@ -230,8 +230,25 @@ namespace OptimizationLab.Benchmark
 
             if (objectCountText != null)
             {
-                int count = testObjectCounts[currentObjectCountIndex];
-                objectCountText.text = $"Objects: {count:N0}\n(↑/↓: Change)";
+                int targetCount = testObjectCounts[currentObjectCountIndex];
+
+                // 인스턴스 모드이면서 브러시 배치가 있으면, 실제 브러시 인스턴스 개수를 표시
+                if (currentMode == BenchmarkMode.JobSystem)
+                {
+                    int paintedCount = GetPaintedInstanceCount();
+                    if (paintedCount > 0)
+                    {
+                        objectCountText.text = $"Objects: {paintedCount:N0} (Brush)\n(↑/↓: Target {targetCount:N0})";
+                    }
+                    else
+                    {
+                        objectCountText.text = $"Objects: {targetCount:N0}\n(↑/↓: Change)";
+                    }
+                }
+                else
+                {
+                    objectCountText.text = $"Objects: {targetCount:N0}\n(↑/↓: Change)";
+                }
             }
 
             if (modeText != null)
@@ -259,6 +276,23 @@ namespace OptimizationLab.Benchmark
         {
             if (mobileModeChangeButton != null)
                 mobileModeChangeButton.onClick.AddListener(ToggleMode);
+        }
+
+        /// <summary>
+        /// 씬에 존재하는 PaintedInstancedRenderer들의 인스턴스 총 개수(브러시로 배치한 개수)를 합산.
+        /// </summary>
+        private int GetPaintedInstanceCount()
+        {
+            int total = 0;
+            var all = Resources.FindObjectsOfTypeAll<PaintedInstancedRenderer>();
+            foreach (var r in all)
+            {
+                if (r == null) continue;
+                if (!r.gameObject.scene.IsValid()) continue; // 프리팹 에셋 제외
+                if (r.Count <= 0) continue;
+                total += r.Count;
+            }
+            return total;
         }
 
         private void OnGUI()
