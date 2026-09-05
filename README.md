@@ -1,6 +1,6 @@
-# 🚀 Unity DOTS Benchmark: 대규모 오브젝트 시뮬레이션
+# 🚀 Unity Job System / Burst Benchmark: 대규모 객체 최적화
 
-> **프로젝트 개요**: Unity의 **Job System, Burst Compiler, GPU Instancing** 기술을 활용하여 50,000개 이상의 객체를 모바일 환경에서 60 FPS로 시뮬레이션하는 고성능 최적화 데모입니다.
+> **프로젝트 개요**: Unity의 **Job System, Burst Compiler, GPU Instancing**을 활용한 대규모 객체 최적화 데모입니다. 모바일에서 10,000개 기준 **약 8~10 FPS → 약 50 FPS**를 확인했습니다.
 
 **Unity 버전**: 6000.0.56f1 (Unity 6)
 
@@ -24,42 +24,41 @@ https://github.com/user-attachments/assets/bf9bb883-ddeb-4c8d-90cc-c3ef8a1afb44
 
 ### 객체 수 10,000개
 
+**약 8~10 FPS → 약 50 FPS**
+
+인스턴스 경로는 그리드에 고정(속도 0)이며, 이동 시뮬레이션이 아닌 **데이터 처리와 GPU Instancing 렌더링** 부하를 측정했습니다.
+
 | 모드 (Mode) | FPS | 비고 |
 |:---:|:---:|:---|
-| **GameObject** | ~10 FPS | 메인 스레드 병목, 드로우콜 과다 |
-| **인스턴스(VAT)** | **~40 FPS** | Job System + GPU Instancing |
+| **GameObject** | 약 8~10 FPS | 개별 GameObject/Transform + Blend Tree Animator |
+| **Job System + Burst + GPU Instancing** | **약 50 FPS** | NativeArray 기반 데이터 처리 + GPU Instancing |
 
-### 객체 수 50,000개
-
-| 모드 (Mode) | FPS | 상태 | 분석 결과 |
-|:---:|:---:|:---:|:---|
-| **GameObject** | ~3 FPS | 플레이 불가 | 메인 스레드 병목, 대량의 GC 발생, 드로우콜 과다 |
-| **Job System** | **59.9 FPS** | **매우 쾌적** | **약 400% 성능 향상**, 병렬 처리, Zero GC 달성 |
+※ 두 방식은 렌더링·애니메이션 구조가 다르며, 동일한 시각적 구성에서 GameObject 기반 구조와 인스턴싱 기반 구조의 성능 차이를 비교했습니다.
 
 ---
 
 ## 🛠️ 핵심 기술 구현 (Key Technologies)
 
-단순한 API 사용을 넘어, 하드웨어 아키텍처를 고려한 **Low-Level 최적화 기법**을 적용했습니다.
+대규모 반복 연산과 렌더링 비용을 줄이기 위해 **Job System / Burst / NativeArray / GPU Instancing**을 적용했습니다.
 
-### 1. Branchless Programming & SIMD (Burst)
-CPU의 분기 예측 실패(Branch Misprediction) 비용을 제거하기 위해 `if-else` 제어문을 제거했습니다.
+### 1. Branchless Boundary Check (Burst)
+경계 체크의 `if-else` 분기를 제거하고, Burst 최적화에 적합한 연산 구조로 구성했습니다.
 - **구현 파일**: `PositionUpdateJob.cs`
-- **적용 기술**: `math.select`와 `bool3` 마스크 연산을 활용하여, 경계(Boundary) 체크 로직을 분기 없는 단일 파이프라인으로 처리했습니다.
+- **적용 기술**: `math.select`와 `bool3` 마스크로 경계 체크를 분기 없는 형태로 처리했습니다.
 
 ### 2. 스레드 의존성 관리 (Dependency Chaining)
-데이터 레이스(Data Race)를 방지하고 메인 스레드의 대기 시간(Stall)을 최소화했습니다.
+데이터 레이스(Data Race)를 방지하고 Job 간 실행 순서를 보장했습니다.
 - **구현 파일**: `JobSystemManager.cs`
-- **적용 기술**: `PositionUpdateJob`(물리 연산)이 완료된 후 `MatrixTransformJob`(렌더링 데이터 변환)이 수행되도록 `JobHandle`을 체이닝하여 워커 스레드 간의 실행 순서를 보장했습니다.
+- **적용 기술**: `PositionUpdateJob`(위치 갱신)이 완료된 후 `MatrixTransformJob`(렌더링 데이터 변환)이 수행되도록 `JobHandle`을 체이닝했습니다.
 
 ### 3. GPU Instancing 및 배칭 (Batching)
-`GameObject`의 Transform 연산 오버헤드를 완전히 제거했습니다.
+인스턴스별 GameObject/Transform 갱신 비용을 제거했습니다.
 - **구현 파일**: `JobSystemManager.cs`
-- **적용 기술**: `NativeArray`로 계산된 행렬 데이터를 1023개 단위로 배칭(Batching) 처리하여 `Graphics.DrawMeshInstanced` API를 통해 GPU에 직접 그리기 명령을 전달합니다.
+- **적용 기술**: `NativeArray`로 계산된 행렬 데이터를 1,023개 단위로 배칭(Batching) 처리하여, `Graphics.DrawMeshInstanced`를 통해 GPU Instancing Draw Call로 렌더링합니다.
 
-### 4. Zero Garbage Collection (GC)
-런타임 중 힙(Heap) 메모리 할당을 0으로 억제했습니다.
-- **메모리 관리**: 모든 연산 데이터는 `NativeArray<T>` (Unmanaged Memory)에서 관리되며, 벤치마크 모드 전환 시 `Setup/Cleanup` 프로세스를 통해 메모리 누수를 원천 차단했습니다.
+### 4. 런타임 GC 할당 최소화
+NativeArray와 사전 생성 배치 데이터를 활용해 런타임 GC 할당을 최소화했습니다.
+- **메모리 관리**: 연산 데이터는 `NativeArray<T>`에서 관리하며, 모드 전환 시 `Initialize`/`Cleanup` 과정에서 Native 메모리의 생성·해제를 관리합니다.
 
 ---
 
@@ -71,7 +70,7 @@ Assets/Scripts/
 │   ├── GameObjectManager.cs     // 대조군 (GameObject + Blend Tree 애니메이션)
 │   └── JobSystemManager.cs     // ★ 인스턴스 렌더링 (NativeArray, 3매터리얼 배칭)
 ├── 📂 JobSystem
-│   ├── PositionUpdateJob.cs    // [Burst] SIMD 위치 연산 (math.select)
+│   ├── PositionUpdateJob.cs    // [Burst] 분기 없는 경계 체크 (math.select)
 │   ├── MatrixTransformJob.cs   // [Burst] 행렬 변환
 │   └── PositionUpdateJobBurstOptimized.cs  // 선택) 추가 최적화 버전
 ├── 📂 Benchmark
